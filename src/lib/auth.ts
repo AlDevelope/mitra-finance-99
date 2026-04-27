@@ -13,9 +13,24 @@ export interface Session {
 const STORAGE_KEY = "mf99_session";
 const SESSION_HOURS = 8;
 
+// ============================================================
+// 🔐 GANTI USERNAME & PASSWORD DI BAWAH INI SEBELUM DEPLOY!
+// Ini adalah satu-satunya tempat akun owner & admin disimpan.
+// Gunakan password yang KUAT (min. 12 karakter, kombinasi huruf+angka+simbol).
+// ============================================================
 const HARDCODED: Record<string, { password: string; role: Role; nama: string }> = {
-  owner: { password: "mitra99owner", role: "super_admin", nama: "Owner MF99" },
-  admin: { password: "admin123", role: "admin", nama: "Admin MF99" },
+  // 👑 OWNER / SUPER ADMIN — akses penuh termasuk hapus data
+  owner: {
+    password: "GANTI_PASSWORD_OWNER_ANDA",
+    role: "super_admin",
+    nama: "Owner Mitra Finance 99",
+  },
+  // 🛡️ ADMIN — bisa kelola nasabah, angsuran, keuangan
+  admin: {
+    password: "GANTI_PASSWORD_ADMIN_ANDA",
+    role: "admin",
+    nama: "Admin Mitra Finance 99",
+  },
 };
 
 export async function login(username: string, password: string): Promise<Session> {

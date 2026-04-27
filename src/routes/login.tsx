@@ -112,12 +112,9 @@ function LoginPage() {
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Masuk"}
           </Button>
 
-          <div className="rounded-xl bg-muted/60 p-3 text-[11px] text-muted-foreground space-y-1">
-            <div className="font-semibold text-foreground/80 mb-1">Akun demo:</div>
-            <div>Owner: <span className="text-brand font-medium">owner / mitra99owner</span></div>
-            <div>Admin: <span className="text-brand font-medium">admin / admin123</span></div>
-            <div>Customer: <span className="text-brand font-medium">yuli / yuli123</span> · sifa / sifa123 · dimas / dimas123</div>
-          </div>
+          <p className="text-center text-[11px] text-muted-foreground pt-1">
+            Hubungi admin jika lupa username atau password.
+          </p>
         </form>
 
         <p className="mt-6 text-center text-xs text-muted-foreground">

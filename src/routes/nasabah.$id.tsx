@@ -8,10 +8,11 @@ import { formatRp, formatTanggal, initials, daysUntil } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Check, MessageCircle, Phone, X, Share2, Copy } from "lucide-react";
+import { ArrowLeft, Check, MessageCircle, Phone, X, Share2, Copy, Wallet, Pencil } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -91,7 +92,14 @@ function NasabahDetail() {
               </p>
             )}
           </div>
-          {editable && <ShareButton nasabah={n} stats={stats} />}
+          {editable && (
+            <div className="flex flex-col gap-2 sm:items-end">
+              <div className="flex gap-2">
+                <BayarManualDialog nasabah={n} angsuran={angs} onDone={load} />
+                <ShareButton nasabah={n} stats={stats} />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Info Kredit */}
@@ -325,6 +333,149 @@ _Mitra Finance 99 — Berkembang, Bertumbuh, Berinovasi_ 🌟`;
               <a href={wa} target="_blank" rel="noreferrer"><MessageCircle className="h-4 w-4 mr-1" /> Kirim WhatsApp</a>
             </Button>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BayarManualDialog({
+  nasabah,
+  angsuran,
+  onDone,
+}: {
+  nasabah: NasabahRow;
+  angsuran: AngsuranRow[];
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [nominal, setNominal] = useState("");
+  const [tanggal, setTanggal] = useState(() => new Date().toISOString().slice(0, 10));
+  const [keterangan, setKeterangan] = useState("");
+  const [catatKeKeuangan, setCatatKeKeuangan] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  const belum = angsuran.filter((a) => a.status_bayar !== "dibayar").sort((a, b) => a.nomor_angsuran - b.nomor_angsuran);
+  const perAngsuran = Number(nasabah.rp_per_angsuran);
+  const nominalNum = Number(nominal.replace(/\D/g, "")) || 0;
+  const akanLunas = Math.min(belum.length, Math.floor(nominalNum / perAngsuran));
+  const sisa = nominalNum - akanLunas * perAngsuran;
+
+  const submit = async () => {
+    if (nominalNum <= 0) return toast.error("Nominal harus lebih dari 0");
+    if (belum.length === 0) return toast.error("Semua angsuran sudah lunas");
+    setLoading(true);
+
+    const target = belum.slice(0, akanLunas);
+    const ket = keterangan.trim() || `Bayar ${formatRp(nominalNum)} pada ${formatTanggal(tanggal)}`;
+
+    if (target.length > 0) {
+      const { error } = await supabase
+        .from("angsuran")
+        .update({ status_bayar: "dibayar", keterangan: ket })
+        .in("id", target.map((a) => a.id));
+      if (error) {
+        setLoading(false);
+        return toast.error(error.message);
+      }
+    }
+
+    // Sisa partial — simpan ke angsuran berikutnya sebagai keterangan saja (tidak ditandai lunas)
+    if (sisa > 0 && belum[akanLunas]) {
+      await supabase
+        .from("angsuran")
+        .update({ keterangan: `Cicilan parsial: ${formatRp(sisa)} (${formatTanggal(tanggal)})` })
+        .eq("id", belum[akanLunas].id);
+    }
+
+    if (catatKeKeuangan) {
+      await supabase.from("keuangan").insert({
+        tanggal,
+        kategori: "angsuran_masuk",
+        nominal: nominalNum,
+        keterangan: `${nasabah.nama} — ${akanLunas}x angsuran${sisa > 0 ? ` + cicilan ${formatRp(sisa)}` : ""}`,
+      });
+    }
+
+    setLoading(false);
+    toast.success(
+      akanLunas > 0
+        ? `${akanLunas} angsuran ditandai LUNAS${sisa > 0 ? `, sisa ${formatRp(sisa)} dicatat` : ""}`
+        : `Cicilan parsial ${formatRp(sisa)} dicatat`
+    );
+    setOpen(false);
+    setNominal("");
+    setKeterangan("");
+    onDone();
+  };
+
+  const formatInput = (v: string) => {
+    const n = v.replace(/\D/g, "");
+    return n ? Number(n).toLocaleString("id-ID") : "";
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" className="bg-gradient-brand text-primary-foreground hover:opacity-90">
+          <Wallet className="h-4 w-4 mr-1" /> Bayar Manual
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Catat Pembayaran — {nasabah.nama}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="rounded-xl bg-muted/40 p-3 text-xs space-y-1">
+            <div className="flex justify-between"><span className="text-muted-foreground">Per angsuran:</span><span className="font-semibold">{formatRp(perAngsuran)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Sisa angsuran:</span><span className="font-semibold">{belum.length}x</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Total sisa:</span><span className="font-semibold text-brand">{formatRp(belum.length * perAngsuran)}</span></div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="nominal">Nominal yang dibayarkan *</Label>
+            <Input
+              id="nominal"
+              inputMode="numeric"
+              placeholder="contoh: 200.000"
+              value={nominal}
+              onChange={(e) => setNominal(formatInput(e.target.value))}
+              className="text-lg font-bold"
+            />
+            {nominalNum > 0 && (
+              <div className="text-xs rounded-lg bg-success/10 border border-success/30 p-2 space-y-0.5">
+                <div>✓ Akan menutup <b>{akanLunas}x</b> angsuran ({formatRp(akanLunas * perAngsuran)})</div>
+                {sisa > 0 && <div className="text-warning">• Sisa {formatRp(sisa)} dicatat sebagai cicilan parsial di angsuran berikutnya</div>}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="tgl">Tanggal Bayar</Label>
+              <Input id="tgl" type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ket-m">Keterangan</Label>
+              <Input id="ket-m" placeholder="opsional" value={keterangan} onChange={(e) => setKeterangan(e.target.value)} />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={catatKeKeuangan}
+              onChange={(e) => setCatatKeKeuangan(e.target.checked)}
+              className="h-4 w-4 accent-[var(--brand)]"
+            />
+            <span>Catat juga ke pos keuangan (pemasukan)</span>
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Batal</Button>
+          <Button onClick={submit} disabled={loading || nominalNum <= 0} className="bg-gradient-brand text-primary-foreground">
+            {loading ? "Menyimpan..." : "Simpan Pembayaran"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

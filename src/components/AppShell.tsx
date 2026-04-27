@@ -16,7 +16,7 @@ const NAV: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["super_admin", "admin"] },
   { to: "/nasabah", label: "Nasabah", icon: Users, roles: ["super_admin", "admin"] },
   { to: "/customer", label: "Tagihan Saya", icon: UserIcon, roles: ["customer"] },
-  { to: "/pengaturan", label: "Pengaturan", icon: Settings, roles: ["super_admin"] },
+  { to: "/pengaturan", label: "Pengaturan", icon: Settings, roles: ["super_admin", "admin"] },
 ];
 
 export function AppShell({ session, children }: { session: Session; children: React.ReactNode }) {
