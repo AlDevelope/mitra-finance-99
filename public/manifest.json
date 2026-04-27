@@ -1,0 +1,19 @@
+{
+  "name": "Mitra Finance 99",
+  "short_name": "MF99",
+  "description": "Berkembang, Bertumbuh, Berinovasi — Platform manajemen angsuran modern.",
+  "theme_color": "#1e3a8a",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
