@@ -33,18 +33,22 @@ function LoginPage() {
   }, [navigate]);
 
   const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const s = await login(username, password);
-      toast.success(`Selamat datang, ${s.nama}`);
-      navigate({ to: s.role === "customer" ? "/customer" : "/dashboard" });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Login gagal");
-    } finally {
-      setLoading(false);
+  e.preventDefault();
+  setLoading(true);
+  try {
+    const s = await login(username, password);
+    if (!s) {
+      toast.error("Username atau password salah");
+      return;
     }
-  };
+    toast.success(`Selamat datang, ${s.nama}`);
+    navigate({ to: s.role === "customer" ? "/customer" : "/dashboard" });
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "Login gagal");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-soft flex items-center justify-center px-4 py-10">

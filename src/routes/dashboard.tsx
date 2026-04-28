@@ -39,6 +39,7 @@ import {
 
 export const Route = createFileRoute("/dashboard")({
   beforeLoad: () => {
+    if (typeof window === "undefined") return;
     const s = getSession();
     if (!s) throw redirect({ to: "/login" });
     if (s.role === "customer") throw redirect({ to: "/customer" });

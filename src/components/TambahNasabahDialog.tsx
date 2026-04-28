@@ -1,220 +1,288 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Loader2, Copy, CheckCircle2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Plus, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
-import { buatNasabahLengkap, type Frekuensi } from "@/lib/nasabah-helpers";
-import { formatRp } from "@/lib/format";
 
 interface Props {
-  onCreated?: () => void;
+  onCreated: () => void;
+}
+
+function formatRpInput(val: string): string {
+  const num = val.replace(/\D/g, "");
+  if (!num) return "";
+  return Number(num).toLocaleString("id-ID");
+}
+
+function parseRp(val: string): number {
+  return parseInt(val.replace(/\D/g, "") || "0", 10);
+}
+
+function generateUsername(nama: string): string {
+  return nama.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12);
 }
 
 export function TambahNasabahDialog({ onCreated }: Props) {
   const [open, setOpen] = useState(false);
+  const [showKeuangan, setShowKeuangan] = useState(false);
+  const [showAkun, setShowAkun] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [hasil, setHasil] = useState<{ username: string; password: string; nama: string } | null>(null);
 
-  const [form, setForm] = useState({
-    nama: "",
-    item_dibeli: "",
-    uang_muka: 0,
-    jumlah_angsuran: 10,
-    rp_per_angsuran: 100000,
-    tgl_mulai: new Date().toISOString().slice(0, 10),
-    whatsapp: "",
-    frekuensi: "mingguan" as Frekuensi,
-    marginPersen: 25,
-    catatModalKePosKeuangan: true,
-    hargaPokok: 0,
-    usernameCustom: "",
-    passwordCustom: "",
-  });
+  // Form fields
+  const [nama, setNama] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [item, setItem] = useState("");
+  const [uangMukaStr, setUangMukaStr] = useState("");
+  const [jumlahAngsuran, setJumlahAngsuran] = useState("10");
+  const [rpAngsuranStr, setRpAngsuranStr] = useState("");
+  const [tglMulai, setTglMulai] = useState(new Date().toISOString().slice(0, 10));
+  const [frekuensi, setFrekuensi] = useState("Mingguan");
+  const [modalStr, setModalStr] = useState("");
+  const [margin, setMargin] = useState("25");
+  const [catatKeuangan, setCatatKeuangan] = useState(true);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
 
-  const totalKredit = form.jumlah_angsuran * form.rp_per_angsuran + Number(form.uang_muka || 0);
-  const estimasiUntung = form.hargaPokok > 0
-    ? totalKredit - form.hargaPokok
-    : (form.jumlah_angsuran * form.rp_per_angsuran) * (form.marginPersen / 100);
+  const uangMuka = parseRp(uangMukaStr);
+  const rpAngsuran = parseRp(rpAngsuranStr);
+  const jml = parseInt(jumlahAngsuran || "0", 10);
+  const totalKredit = rpAngsuran * jml;
+  const modal = parseRp(modalStr);
+  const estimasiUntung = modal > 0 ? totalKredit - modal - uangMuka : 0;
 
   const reset = () => {
-    setForm({
-      nama: "", item_dibeli: "", uang_muka: 0, jumlah_angsuran: 10,
-      rp_per_angsuran: 100000, tgl_mulai: new Date().toISOString().slice(0, 10),
-      whatsapp: "", frekuensi: "mingguan", marginPersen: 25,
-      catatModalKePosKeuangan: true, hargaPokok: 0, usernameCustom: "", passwordCustom: "",
-    });
-    setHasil(null);
+    setNama(""); setWhatsapp(""); setItem("");
+    setUangMukaStr(""); setJumlahAngsuran("10"); setRpAngsuranStr("");
+    setTglMulai(new Date().toISOString().slice(0, 10)); setFrekuensi("Mingguan");
+    setModalStr(""); setMargin("25"); setCatatKeuangan(true);
+    setUsername(""); setPassword("");
+    setShowKeuangan(false); setShowAkun(false);
   };
 
-  const submit = async () => {
-    if (!form.nama.trim() || !form.item_dibeli.trim()) {
-      toast.error("Nama & item harus diisi");
-      return;
-    }
-    if (form.jumlah_angsuran < 1 || form.rp_per_angsuran < 1) {
-      toast.error("Jumlah & nominal angsuran harus > 0");
-      return;
-    }
+  const handleNamaChange = (v: string) => {
+    setNama(v);
+    if (!username) setUsername(generateUsername(v));
+    if (!password) setPassword(generateUsername(v) + "123");
+  };
+
+  const handleSubmit = async () => {
+    if (!nama.trim()) return toast.error("Nama wajib diisi");
+    if (!item.trim()) return toast.error("Item wajib diisi");
+    if (!jml || jml < 1) return toast.error("Jumlah angsuran wajib diisi");
+    if (!rpAngsuran || rpAngsuran < 1) return toast.error("Rp/Angsuran wajib diisi");
+
     setLoading(true);
     try {
-      const res = await buatNasabahLengkap({
-        nama: form.nama.trim(),
-        item_dibeli: form.item_dibeli.trim(),
-        uang_muka: Number(form.uang_muka) || 0,
-        jumlah_angsuran: Number(form.jumlah_angsuran),
-        rp_per_angsuran: Number(form.rp_per_angsuran),
-        tgl_mulai: form.tgl_mulai,
-        whatsapp: form.whatsapp || null,
-        frekuensi: form.frekuensi,
-        marginPersen: Number(form.marginPersen) || 0,
-        catatModalKePosKeuangan: form.catatModalKePosKeuangan,
-        hargaPokok: Number(form.hargaPokok) || 0,
-        username: form.usernameCustom || undefined,
-        password: form.passwordCustom || undefined,
+      const finalUsername = username.trim() || generateUsername(nama);
+      const finalPassword = password.trim() || finalUsername + "123";
+
+      const { error } = await supabase.from("nasabah").insert({
+        nama: nama.trim(),
+        item_dibeli: item.trim(),
+        uang_muka: uangMuka,
+        jumlah_angsuran: jml,
+        rp_per_angsuran: rpAngsuran,
+        tgl_mulai: tglMulai,
+        status: "aktif",
+        whatsapp: whatsapp.trim() || null,
+        username: finalUsername,
+        password: finalPassword,
       });
-      setHasil({ username: res.username, password: res.password, nama: res.nasabah.nama });
-      toast.success("Nasabah berhasil ditambahkan");
-      onCreated?.();
-    } catch (e) {
-      toast.error((e as Error).message);
+
+      if (error) throw error;
+
+      // Catat ke keuangan jika diaktifkan
+      if (catatKeuangan && modal > 0) {
+        await supabase.from("keuangan").insert([
+          { kategori: "uang_dipinjamkan", nominal: modal, keterangan: `Modal ${nama}`, tanggal: tglMulai },
+          ...(uangMuka > 0 ? [{ kategori: "uang_cash", nominal: uangMuka, keterangan: `DP ${nama}`, tanggal: tglMulai }] : []),
+        ]);
+      }
+
+      toast.success(`Nasabah ${nama} berhasil ditambahkan — login: ${finalUsername} / ${finalPassword}`);
+      reset();
+      setOpen(false);
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal menyimpan");
     } finally {
       setLoading(false);
     }
   };
 
-  const copyAkun = () => {
-    if (!hasil) return;
-    navigator.clipboard.writeText(`Username: ${hasil.username}\nPassword: ${hasil.password}`);
-    toast.success("Akun disalin");
-  };
-
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
       <DialogTrigger asChild>
-        <Button className="gap-2"><Plus className="h-4 w-4" /> Tambah Nasabah</Button>
+        <Button className="bg-gradient-brand text-primary-foreground gap-2">
+          <Plus className="h-4 w-4" /> Tambah Nasabah
+        </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{hasil ? "Nasabah Berhasil Dibuat" : "Tambah Nasabah Baru"}</DialogTitle>
+          <DialogTitle>Tambah Nasabah Baru</DialogTitle>
         </DialogHeader>
 
-        {hasil ? (
-          <div className="space-y-4">
-            <div className="rounded-xl border-2 border-brand bg-brand/5 p-5">
-              <div className="flex items-center gap-2 text-brand">
-                <CheckCircle2 className="h-5 w-5" />
-                <span className="font-semibold">{hasil.nama}</span>
-              </div>
-              <div className="mt-4 space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Username:</span><span className="font-mono font-bold">{hasil.username}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Password:</span><span className="font-mono font-bold">{hasil.password}</span></div>
-              </div>
-              <p className="text-xs text-muted-foreground mt-3">Berikan akun ini ke nasabah agar bisa login & melihat tagihannya.</p>
+        <div className="space-y-4 pt-2">
+          {/* Info dasar */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Nama Lengkap *</Label>
+              <Input placeholder="cth. Budi Santoso" value={nama} onChange={(e) => handleNamaChange(e.target.value)} />
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={copyAkun} className="gap-2 flex-1"><Copy className="h-4 w-4" /> Salin Akun</Button>
-              <Button onClick={() => { reset(); }} className="flex-1">Tambah Lagi</Button>
-              <Button variant="ghost" onClick={() => setOpen(false)}>Tutup</Button>
+            <div className="space-y-1.5">
+              <Label>WhatsApp</Label>
+              <Input placeholder="628xxxxxxxxxx" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} />
             </div>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Nama Lengkap *">
-                <Input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} placeholder="cth. Budi Santoso" />
-              </Field>
-              <Field label="WhatsApp">
-                <Input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} placeholder="628xxx" />
-              </Field>
-            </div>
-            <Field label="Item / Barang Dibeli *">
-              <Input value={form.item_dibeli} onChange={(e) => setForm({ ...form, item_dibeli: e.target.value })} placeholder="cth. Motor Honda Beat 2024" />
-            </Field>
 
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="Uang Muka (DP)">
-                <Input type="number" value={form.uang_muka} onChange={(e) => setForm({ ...form, uang_muka: Number(e.target.value) })} />
-              </Field>
-              <Field label="Jumlah Angsuran *">
-                <Input type="number" value={form.jumlah_angsuran} onChange={(e) => setForm({ ...form, jumlah_angsuran: Number(e.target.value) })} />
-              </Field>
-              <Field label="Rp / Angsuran *">
-                <Input type="number" value={form.rp_per_angsuran} onChange={(e) => setForm({ ...form, rp_per_angsuran: Number(e.target.value) })} />
-              </Field>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Tanggal Mulai">
-                <Input type="date" value={form.tgl_mulai} onChange={(e) => setForm({ ...form, tgl_mulai: e.target.value })} />
-              </Field>
-              <Field label="Frekuensi Angsuran">
-                <Select value={form.frekuensi} onValueChange={(v) => setForm({ ...form, frekuensi: v as Frekuensi })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="harian">Harian</SelectItem>
-                    <SelectItem value="mingguan">Mingguan (default)</SelectItem>
-                    <SelectItem value="bulanan">Bulanan</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-
-            <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Keuangan</div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Harga Pokok Barang (modal)">
-                  <Input type="number" value={form.hargaPokok} onChange={(e) => setForm({ ...form, hargaPokok: Number(e.target.value) })} placeholder="Kosongkan jika pakai % margin" />
-                </Field>
-                <Field label="Margin Keuntungan (%)">
-                  <Input type="number" value={form.marginPersen} onChange={(e) => setForm({ ...form, marginPersen: Number(e.target.value) })} disabled={form.hargaPokok > 0} />
-                </Field>
-              </div>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <Checkbox checked={form.catatModalKePosKeuangan} onCheckedChange={(v) => setForm({ ...form, catatModalKePosKeuangan: !!v })} />
-                Catat modal & DP otomatis ke pos keuangan
-              </label>
-            </div>
-
-            <details className="rounded-xl border border-border p-4">
-              <summary className="cursor-pointer text-sm font-semibold">Akun Login (opsional, otomatis jika kosong)</summary>
-              <div className="grid grid-cols-2 gap-3 mt-3">
-                <Field label="Username Custom">
-                  <Input value={form.usernameCustom} onChange={(e) => setForm({ ...form, usernameCustom: e.target.value })} placeholder="auto" />
-                </Field>
-                <Field label="Password Custom">
-                  <Input value={form.passwordCustom} onChange={(e) => setForm({ ...form, passwordCustom: e.target.value })} placeholder="auto" />
-                </Field>
-              </div>
-            </details>
-
-            <div className="rounded-xl border border-brand/30 bg-brand/5 p-4 grid grid-cols-2 gap-3 text-sm">
-              <div><div className="text-muted-foreground text-xs">Total Kredit</div><div className="font-bold text-brand">{formatRp(totalKredit)}</div></div>
-              <div><div className="text-muted-foreground text-xs">Estimasi Untung</div><div className="font-bold text-success">{formatRp(estimasiUntung)}</div></div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Batal</Button>
-              <Button onClick={submit} disabled={loading} className="gap-2">
-                {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                Simpan & Buat Akun
-              </Button>
-            </DialogFooter>
+          <div className="space-y-1.5">
+            <Label>Item / Barang Dibeli *</Label>
+            <Input placeholder="cth. Motor Honda Beat 2024" value={item} onChange={(e) => setItem(e.target.value)} />
           </div>
-        )}
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Uang Muka (DP)</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">Rp</span>
+                <Input
+                  className="pl-8"
+                  placeholder="0"
+                  value={uangMukaStr}
+                  onChange={(e) => setUangMukaStr(formatRpInput(e.target.value))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Jumlah Angsuran *</Label>
+              <Input type="number" min={1} placeholder="10" value={jumlahAngsuran} onChange={(e) => setJumlahAngsuran(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Rp / Angsuran *</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">Rp</span>
+                <Input
+                  className="pl-8"
+                  placeholder="0"
+                  value={rpAngsuranStr}
+                  onChange={(e) => setRpAngsuranStr(formatRpInput(e.target.value))}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Tanggal Mulai</Label>
+              <Input type="date" value={tglMulai} onChange={(e) => setTglMulai(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Frekuensi Angsuran</Label>
+              <select
+                value={frekuensi}
+                onChange={(e) => setFrekuensi(e.target.value)}
+                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option>Mingguan</option>
+                <option>Bulanan</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Keuangan section */}
+          <div className="rounded-xl border border-border overflow-hidden">
+            <button
+              type="button"
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium bg-muted/30 hover:bg-muted/50 transition-colors"
+              onClick={() => setShowKeuangan(!showKeuangan)}
+            >
+              <span className="uppercase tracking-wider text-xs text-muted-foreground">Keuangan</span>
+              {showKeuangan ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            {showKeuangan && (
+              <div className="p-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Harga Pokok Barang (modal)</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">Rp</span>
+                      <Input className="pl-8" placeholder="0" value={modalStr} onChange={(e) => setModalStr(formatRpInput(e.target.value))} />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Margin Keuntungan (%)</Label>
+                    <Input type="number" value={margin} onChange={(e) => setMargin(e.target.value)} />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input type="checkbox" checked={catatKeuangan} onChange={(e) => setCatatKeuangan(e.target.checked)} className="rounded" />
+                  Catat modal & DP otomatis ke pos keuangan
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Akun login */}
+          <div className="rounded-xl border border-border overflow-hidden">
+            <button
+              type="button"
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium bg-muted/30 hover:bg-muted/50 transition-colors"
+              onClick={() => setShowAkun(!showAkun)}
+            >
+              <span className="text-sm">► Akun Login (opsional, otomatis jika kosong)</span>
+              {showAkun ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            {showAkun && (
+              <div className="p-4 grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Username</Label>
+                  <Input placeholder="otomatis dari nama" value={username} onChange={(e) => setUsername(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Password</Label>
+                  <Input placeholder="otomatis dari username" value={password} onChange={(e) => setPassword(e.target.value)} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Summary */}
+          {rpAngsuran > 0 && jml > 0 && (
+            <div className="rounded-xl bg-muted/30 border border-border p-4 grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="text-xs text-muted-foreground">Total Kredit</div>
+                <div className="font-bold text-brand text-base">Rp {totalKredit.toLocaleString("id-ID")}</div>
+              </div>
+              {modal > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground">Estimasi Untung</div>
+                  <div className="font-bold text-success text-base">Rp {estimasiUntung.toLocaleString("id-ID")}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setOpen(false)}>Batal</Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="bg-gradient-brand text-primary-foreground"
+            >
+              {loading ? "Menyimpan..." : "Simpan & Buat Akun"}
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-xs">{label}</Label>
-      {children}
-    </div>
   );
 }

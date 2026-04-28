@@ -1,19 +1,17 @@
-import { createFileRoute, redirect, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import * as XLSX from "xlsx";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { useState, useCallback } from "react";
 import { AppShell } from "@/components/AppShell";
 import { getSession, type Session } from "@/lib/auth";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Upload, FileSpreadsheet, Loader2, CheckCircle2, AlertTriangle, ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, Download, Upload, CheckCircle, XCircle, Loader2, FileSpreadsheet } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { buatNasabahLengkap, type Frekuensi } from "@/lib/nasabah-helpers";
-import { formatRp } from "@/lib/format";
+import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/import")({
   beforeLoad: () => {
+    if (typeof window === "undefined") return;
     const s = getSession();
     if (!s) throw redirect({ to: "/login" });
     if (s.role === "customer") throw redirect({ to: "/customer" });
@@ -21,209 +19,404 @@ export const Route = createFileRoute("/import")({
   component: ImportPage,
 });
 
-interface RawRow { [k: string]: unknown }
-interface MappedRow {
+interface NasabahImport {
   nama: string;
   item_dibeli: string;
   uang_muka: number;
   jumlah_angsuran: number;
   rp_per_angsuran: number;
   tgl_mulai: string;
-  whatsapp: string;
-  hargaPokok: number;
+  username: string;
+  password: string;
+  whatsapp?: string;
 }
 
-const COLS: { key: keyof MappedRow; label: string; required?: boolean }[] = [
-  { key: "nama", label: "Nama", required: true },
-  { key: "item_dibeli", label: "Item / Barang", required: true },
-  { key: "uang_muka", label: "Uang Muka" },
-  { key: "jumlah_angsuran", label: "Jumlah Angsuran", required: true },
-  { key: "rp_per_angsuran", label: "Rp / Angsuran", required: true },
-  { key: "tgl_mulai", label: "Tanggal Mulai" },
-  { key: "whatsapp", label: "WhatsApp" },
-  { key: "hargaPokok", label: "Harga Pokok / Modal" },
-];
+interface ImportResult {
+  nama: string;
+  status: "success" | "error" | "skip";
+  message: string;
+}
+
+function generateUsername(nama: string): string {
+  return nama.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12);
+}
+
+function generatePassword(username: string): string {
+  return username + "123";
+}
+
+function parseExcel(file: File): Promise<NasabahImport[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: "array" });
+
+        // Coba sheet "Pembayaran" dulu, fallback ke sheet pertama
+        const sheetName = wb.SheetNames.includes("Pembayaran")
+          ? "Pembayaran"
+          : wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
+        const rows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+        const nasabahList: NasabahImport[] = [];
+
+        // Parse format Excel MF99: data dalam 2 kolom, setiap blok 24 baris
+        // Kiri: col B(1)-F(5), Kanan: col H(7)-L(11)
+        // Row pattern per nasabah: Nama, Item, Uang Muka, Jumlah Angsuran, Rp, ...tanggal angsuran
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i] as unknown[];
+
+          // Deteksi baris "Nama" untuk blok kiri (kolom B = index 1)
+          if (row[1] === "Nama" && i + 4 < rows.length) {
+            const nama = rows[i][2] as string;
+            const item = rows[i + 1]?.[2] as string;
+            const um = (rows[i + 2]?.[2] as number) || 0;
+            const jml = rows[i + 3]?.[2] as number;
+            const rp = rows[i + 4]?.[2] as number;
+
+            if (nama && typeof nama === "string" && jml && rp) {
+              const uname = generateUsername(nama);
+              nasabahList.push({
+                nama: nama.trim(),
+                item_dibeli: item?.toString().trim() || "-",
+                uang_muka: um || 0,
+                jumlah_angsuran: jml,
+                rp_per_angsuran: rp,
+                tgl_mulai: new Date().toISOString().slice(0, 10),
+                username: uname,
+                password: generatePassword(uname),
+              });
+            }
+          }
+
+          // Deteksi baris "Nama" untuk blok kanan (kolom H = index 7)
+          if (row[7] === "Nama" && i + 4 < rows.length) {
+            const nama = rows[i][8] as string;
+            const item = rows[i + 1]?.[8] as string;
+            const um = (rows[i + 2]?.[8] as number) || 0;
+            const jml = rows[i + 3]?.[8] as number;
+            const rp = rows[i + 4]?.[8] as number;
+
+            if (nama && typeof nama === "string" && jml && rp) {
+              const uname = generateUsername(nama);
+              nasabahList.push({
+                nama: nama.trim(),
+                item_dibeli: item?.toString().trim() || "-",
+                uang_muka: um || 0,
+                jumlah_angsuran: jml,
+                rp_per_angsuran: rp,
+                tgl_mulai: new Date().toISOString().slice(0, 10),
+                username: uname,
+                password: generatePassword(uname),
+              });
+            }
+          }
+        }
+
+        // Jika format berbeda (sheet dengan header kolom), coba parse sebagai tabel biasa
+        if (nasabahList.length === 0) {
+          const json = XLSX.utils.sheet_to_json(ws) as Record<string, unknown>[];
+          for (const row of json) {
+            const nama =
+              (row["nama"] || row["Nama"] || row["NAMA"]) as string;
+            const item =
+              (row["item_dibeli"] || row["Item"] || row["ITEM"] || row["Barang"]) as string;
+            const jml = Number(
+              row["jumlah_angsuran"] || row["Jumlah Angsuran"] || row["tenor"] || 0
+            );
+            const rp = Number(
+              row["rp_per_angsuran"] || row["Rp/Angsuran"] || row["cicilan"] || 0
+            );
+            const um = Number(row["uang_muka"] || row["Uang Muka"] || row["DP"] || 0);
+
+            if (nama && jml && rp) {
+              const uname = generateUsername(nama);
+              nasabahList.push({
+                nama: nama.trim(),
+                item_dibeli: item?.toString().trim() || "-",
+                uang_muka: um,
+                jumlah_angsuran: jml,
+                rp_per_angsuran: rp,
+                tgl_mulai: new Date().toISOString().slice(0, 10),
+                username: uname,
+                password: generatePassword(uname),
+              });
+            }
+          }
+        }
+
+        resolve(nasabahList);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function downloadTemplate() {
+  const wb = XLSX.utils.book_new();
+  const data = [
+    ["nama", "item_dibeli", "uang_muka", "jumlah_angsuran", "rp_per_angsuran", "tgl_mulai", "whatsapp"],
+    ["Budi Santoso", "Motor Honda Beat", 500000, 12, 300000, "2026-01-01", "628123456789"],
+    ["Siti Rahayu", "Kulkas 2 Pintu", 0, 10, 150000, "2026-01-15", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws["!cols"] = [{ wch: 20 }, { wch: 25 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(wb, ws, "Nasabah");
+  XLSX.writeFile(wb, "template-import-nasabah.xlsx");
+}
 
 function ImportPage() {
   const session = getSession() as Session;
-  const [rawRows, setRawRows] = useState<RawRow[]>([]);
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [frekuensi, setFrekuensi] = useState<Frekuensi>("mingguan");
-  const [marginPersen, setMarginPersen] = useState(25);
-  const [importing, setImporting] = useState(false);
-  const [hasil, setHasil] = useState<{ nama: string; username: string; password: string; ok: boolean; error?: string }[]>([]);
+  const navigate = useNavigate();
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [preview, setPreview] = useState<NasabahImport[]>([]);
+  const [results, setResults] = useState<ImportResult[]>([]);
+  const [step, setStep] = useState<"upload" | "preview" | "done">("upload");
 
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+      toast.error("File harus berformat .xlsx atau .xls");
+      return;
+    }
+    try {
+      setLoading(true);
+      const data = await parseExcel(file);
+      if (data.length === 0) {
+        toast.error("Tidak ada data nasabah yang bisa dibaca dari file ini");
+        return;
+      }
+      setPreview(data);
+      setStep("preview");
+      toast.success(`${data.length} nasabah berhasil dibaca dari Excel`);
+    } catch (err) {
+      toast.error("Gagal membaca file Excel");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragging(false);
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    },
+    [handleFile]
+  );
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf);
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const json = XLSX.utils.sheet_to_json<RawRow>(ws, { defval: "" });
-    if (!json.length) return toast.error("File kosong");
-    const hdr = Object.keys(json[0]);
-    setHeaders(hdr);
-    setRawRows(json);
-    // auto-mapping berdasarkan nama kolom
-    const auto: Record<string, string> = {};
-    for (const c of COLS) {
-      const found = hdr.find((h) => h.toLowerCase().replace(/[^a-z]/g, "").includes(c.key.toLowerCase().replace(/[^a-z]/g, "").slice(0, 5)));
-      if (found) auto[c.key] = found;
-    }
-    setMapping(auto);
-    toast.success(`${json.length} baris terbaca`);
+    if (file) handleFile(file);
   };
 
-  const parseRow = (row: RawRow): MappedRow => {
-    const get = (k: keyof MappedRow) => row[mapping[k]];
-    const num = (v: unknown) => Number(String(v ?? "0").replace(/[^\d.-]/g, "")) || 0;
-    let tgl = String(get("tgl_mulai") || "");
-    if (tgl && !isNaN(Number(tgl))) {
-      // Excel serial date
-      const d = XLSX.SSF.parse_date_code(Number(tgl));
-      if (d) tgl = `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
-    }
-    if (!tgl) tgl = new Date().toISOString().slice(0, 10);
-    return {
-      nama: String(get("nama") || "").trim(),
-      item_dibeli: String(get("item_dibeli") || "-").trim(),
-      uang_muka: num(get("uang_muka")),
-      jumlah_angsuran: num(get("jumlah_angsuran")),
-      rp_per_angsuran: num(get("rp_per_angsuran")),
-      tgl_mulai: tgl,
-      whatsapp: String(get("whatsapp") || "").trim(),
-      hargaPokok: num(get("hargaPokok")),
-    };
-  };
+  const doImport = async () => {
+    setLoading(true);
+    const res: ImportResult[] = [];
 
-  const startImport = async () => {
-    const required = COLS.filter((c) => c.required);
-    for (const r of required) if (!mapping[r.key]) return toast.error(`Mapping kolom "${r.label}" wajib diisi`);
-
-    setImporting(true);
-    const results: typeof hasil = [];
-    for (const raw of rawRows) {
-      const row = parseRow(raw);
-      if (!row.nama || row.jumlah_angsuran < 1 || row.rp_per_angsuran < 1) {
-        results.push({ nama: row.nama || "(tanpa nama)", username: "-", password: "-", ok: false, error: "Data wajib kosong/invalid" });
-        continue;
-      }
+    for (const n of preview) {
       try {
-        const res = await buatNasabahLengkap({
-          ...row,
-          frekuensi,
-          marginPersen,
-          catatModalKePosKeuangan: row.hargaPokok > 0,
+        // Cek apakah username sudah ada
+        const { data: existing } = await supabase
+          .from("nasabah")
+          .select("id")
+          .eq("username", n.username)
+          .maybeSingle();
+
+        // Jika username sudah ada, tambahkan suffix
+        let username = n.username;
+        if (existing) {
+          username = n.username + Math.floor(10 + Math.random() * 90);
+        }
+
+        const { error } = await supabase.from("nasabah").insert({
+          nama: n.nama,
+          item_dibeli: n.item_dibeli,
+          uang_muka: n.uang_muka,
+          jumlah_angsuran: n.jumlah_angsuran,
+          rp_per_angsuran: n.rp_per_angsuran,
+          tgl_mulai: n.tgl_mulai,
+          status: "aktif",
+          username,
+          password: generatePassword(username),
+          whatsapp: n.whatsapp || null,
         });
-        results.push({ nama: row.nama, username: res.username, password: res.password, ok: true });
-      } catch (e) {
-        results.push({ nama: row.nama, username: "-", password: "-", ok: false, error: (e as Error).message });
+
+        if (error) throw error;
+        res.push({ nama: n.nama, status: "success", message: `Berhasil — login: ${username} / ${generatePassword(username)}` });
+      } catch (err) {
+        res.push({ nama: n.nama, status: "error", message: err instanceof Error ? err.message : "Gagal" });
       }
     }
-    setHasil(results);
-    setImporting(false);
-    toast.success(`Selesai: ${results.filter((r) => r.ok).length}/${results.length} berhasil`);
-  };
 
-  const downloadTemplate = () => {
-    const data = [{
-      Nama: "Contoh Budi", Item: "Motor Beat", "Uang Muka": 0,
-      "Jumlah Angsuran": 20, "Rp Per Angsuran": 250000,
-      "Tanggal Mulai": "2025-01-15", WhatsApp: "628123456789", "Harga Pokok": 4000000,
-    }];
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Nasabah");
-    XLSX.writeFile(wb, "template-nasabah.xlsx");
-  };
+    setResults(res);
+    setStep("done");
+    setLoading(false);
 
-  const downloadHasil = () => {
-    const ws = XLSX.utils.json_to_sheet(hasil);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Akun Nasabah");
-    XLSX.writeFile(wb, "akun-nasabah-hasil-import.xlsx");
+    const sukses = res.filter((r) => r.status === "success").length;
+    toast.success(`${sukses} dari ${res.length} nasabah berhasil diimport`);
   };
 
   return (
     <AppShell session={session}>
-      <Link to="/nasabah" className="text-sm text-muted-foreground inline-flex items-center gap-1 hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Kembali</Link>
-      <h1 className="font-serif text-3xl font-bold mt-2">Import Excel → Database</h1>
-      <p className="text-sm text-muted-foreground mt-1">Upload file Excel berisi data nasabah. Sistem akan otomatis membuat akun login & jadwal angsuran.</p>
-
-      <div className="mt-6 flex gap-2">
-        <Button variant="outline" onClick={downloadTemplate} className="gap-2"><Download className="h-4 w-4" /> Download Template</Button>
-      </div>
-
-      <div className="mt-6 rounded-2xl border-2 border-dashed border-border p-8 text-center">
-        <FileSpreadsheet className="h-12 w-12 mx-auto text-brand" />
-        <p className="mt-3 font-semibold">Pilih file Excel (.xlsx atau .xls)</p>
-        <input type="file" accept=".xlsx,.xls,.csv" onChange={onFile} className="mt-4 mx-auto block text-sm" />
-      </div>
-
-      {headers.length > 0 && (
-        <div className="mt-6 rounded-2xl border border-border bg-card p-5">
-          <h2 className="font-semibold mb-3">Mapping Kolom ({rawRows.length} baris)</h2>
-          <div className="grid sm:grid-cols-2 gap-3">
-            {COLS.map((c) => (
-              <div key={c.key} className="space-y-1">
-                <Label className="text-xs">{c.label} {c.required && <span className="text-destructive">*</span>}</Label>
-                <Select value={mapping[c.key] || ""} onValueChange={(v) => setMapping({ ...mapping, [c.key]: v })}>
-                  <SelectTrigger><SelectValue placeholder="-- pilih kolom --" /></SelectTrigger>
-                  <SelectContent>
-                    {headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-5 grid sm:grid-cols-2 gap-3">
-            <div className="space-y-1"><Label className="text-xs">Frekuensi Angsuran</Label>
-              <Select value={frekuensi} onValueChange={(v) => setFrekuensi(v as Frekuensi)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="harian">Harian</SelectItem>
-                  <SelectItem value="mingguan">Mingguan</SelectItem>
-                  <SelectItem value="bulanan">Bulanan</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1"><Label className="text-xs">Margin Default (%) — bila harga pokok kosong</Label>
-              <Input type="number" value={marginPersen} onChange={(e) => setMarginPersen(Number(e.target.value))} />
-            </div>
-          </div>
-
-          <Button onClick={startImport} disabled={importing} className="mt-5 gap-2 w-full">
-            {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            {importing ? "Mengimport..." : `Import ${rawRows.length} Nasabah`}
+      <div className="mb-6 flex items-center gap-3">
+        <Link to="/nasabah">
+          <Button variant="ghost" size="sm" className="gap-1">
+            <ArrowLeft className="h-4 w-4" /> Kembali
           </Button>
+        </Link>
+        <div>
+          <h1 className="font-serif text-3xl font-bold">Import Excel → Database</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Upload file Excel berisi data nasabah. Sistem otomatis membuat akun login & username/password.
+          </p>
+        </div>
+      </div>
+
+      {step === "upload" && (
+        <div className="space-y-4">
+          <Button variant="outline" onClick={downloadTemplate} className="gap-2">
+            <Download className="h-4 w-4" /> Download Template
+          </Button>
+
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            className={
+              "relative rounded-2xl border-2 border-dashed p-16 text-center transition-colors cursor-pointer " +
+              (dragging ? "border-brand bg-brand/5" : "border-border hover:border-brand/50")
+            }
+            onClick={() => document.getElementById("file-input")?.click()}
+          >
+            <input
+              id="file-input"
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={onFileChange}
+            />
+            {loading ? (
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-12 w-12 animate-spin text-brand" />
+                <p className="text-muted-foreground">Membaca file...</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                <FileSpreadsheet className="h-12 w-12 text-muted-foreground" />
+                <p className="font-semibold">Drag & drop file Excel di sini</p>
+                <p className="text-sm text-muted-foreground">atau klik untuk memilih file (.xlsx atau .xls)</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {hasil.length > 0 && (
-        <div className="mt-6 rounded-2xl border border-border bg-card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Hasil Import ({hasil.filter(h => h.ok).length}/{hasil.length} sukses)</h2>
-            <Button size="sm" variant="outline" onClick={downloadHasil} className="gap-2"><Download className="h-4 w-4" /> Download Akun</Button>
+      {step === "preview" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-lg">{preview.length} nasabah siap diimport</h2>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setStep("upload")}>Batal</Button>
+              <Button onClick={doImport} disabled={loading} className="bg-gradient-brand text-primary-foreground gap-2">
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                Import Sekarang
+              </Button>
+            </div>
           </div>
-          <div className="overflow-auto max-h-96">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card"><tr className="border-b border-border text-left">
-                <th className="py-2">Status</th><th>Nama</th><th>Username</th><th>Password</th><th>Catatan</th>
-              </tr></thead>
-              <tbody>
-                {hasil.map((h, i) => (
-                  <tr key={i} className="border-b border-border/40">
-                    <td className="py-2">{h.ok ? <CheckCircle2 className="h-4 w-4 text-success" /> : <AlertTriangle className="h-4 w-4 text-destructive" />}</td>
-                    <td>{h.nama}</td>
-                    <td className="font-mono">{h.username}</td>
-                    <td className="font-mono">{h.password}</td>
-                    <td className="text-xs text-muted-foreground">{h.error || "OK"}</td>
+
+          <div className="rounded-xl border border-border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="text-left px-3 py-2">Nama</th>
+                    <th className="text-left px-3 py-2">Item</th>
+                    <th className="text-right px-3 py-2">DP</th>
+                    <th className="text-right px-3 py-2">Angsuran</th>
+                    <th className="text-right px-3 py-2">Rp/Angsuran</th>
+                    <th className="text-left px-3 py-2">Username</th>
+                    <th className="text-left px-3 py-2">Password</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {preview.map((n, i) => (
+                    <tr key={i} className="border-t border-border">
+                      <td className="px-3 py-2 font-medium">{n.nama}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{n.item_dibeli}</td>
+                      <td className="px-3 py-2 text-right">{n.uang_muka.toLocaleString("id-ID")}</td>
+                      <td className="px-3 py-2 text-right">{n.jumlah_angsuran}x</td>
+                      <td className="px-3 py-2 text-right font-medium">Rp {n.rp_per_angsuran.toLocaleString("id-ID")}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-brand">{n.username}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{n.password}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === "done" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-lg">Hasil Import</h2>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => { setStep("upload"); setPreview([]); setResults([]); }}>
+                Import Lagi
+              </Button>
+              <Button onClick={() => navigate({ to: "/nasabah" })} className="bg-gradient-brand text-primary-foreground">
+                Lihat Nasabah
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-success/30 bg-success/5 p-4 text-center">
+              <div className="text-2xl font-bold text-success">{results.filter(r => r.status === "success").length}</div>
+              <div className="text-xs text-muted-foreground mt-1">Berhasil</div>
+            </div>
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-center">
+              <div className="text-2xl font-bold text-destructive">{results.filter(r => r.status === "error").length}</div>
+              <div className="text-xs text-muted-foreground mt-1">Gagal</div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="text-left px-3 py-2">Nama</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Info</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((r, i) => (
+                    <tr key={i} className="border-t border-border">
+                      <td className="px-3 py-2 font-medium">{r.nama}</td>
+                      <td className="px-3 py-2">
+                        {r.status === "success" ? (
+                          <span className="flex items-center gap-1 text-success"><CheckCircle className="h-4 w-4" /> Berhasil</span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-destructive"><XCircle className="h-4 w-4" /> Gagal</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground font-mono">{r.message}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

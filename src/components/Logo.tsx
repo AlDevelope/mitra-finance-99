@@ -10,7 +10,7 @@ export function Logo({ size = 56, className }: { size?: number; className?: stri
       style={{ width: size, height: size }}
       aria-label="Mitra Finance 99"
     >
-      <img src="/logo.jpeg" alt="Logo Mitra Finance 99" className="w-full h-full object-cover" />
+      <img src="images/logo.jpeg" alt="Logo Mitra Finance 99" className="w-full h-full object-cover" />
     </div>
   );
 }

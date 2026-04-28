@@ -38,10 +38,11 @@ import {
 
 export const Route = createFileRoute("/pengaturan")({
   beforeLoad: () => {
-    const s = getSession();
-    if (!s) throw redirect({ to: "/login" });
-    if (s.role === "customer") throw redirect({ to: "/customer" });
-  },
+    if (typeof window === "undefined") return; // ← tambahkan ini
+  const s = getSession();
+  if (!s) throw redirect({ to: "/login" });
+  if (s.role === "customer") throw redirect({ to: "/customer" });
+},
   component: PengaturanPage,
 });
 

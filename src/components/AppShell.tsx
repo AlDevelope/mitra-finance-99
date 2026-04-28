@@ -1,4 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { LayoutDashboard, Users, LogOut, User as UserIcon, Settings } from "lucide-react";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
@@ -22,12 +23,31 @@ const NAV: NavItem[] = [
 export function AppShell({ session, children }: { session: Session; children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const items = NAV.filter((i) => i.roles.includes(session.role));
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const items = mounted && session?.role
+    ? NAV.filter((i) => i.roles.includes(session.role))
+    : [];
 
   const handleLogout = () => {
     logout();
     navigate({ to: "/login" });
   };
+
+  // Saat SSR / belum mounted, render skeleton minimal tanpa nav
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-background">
+        <main className="lg:pl-64 pb-24 lg:pb-8">
+          <div className="mx-auto max-w-7xl px-4 lg:px-8 py-6">{children}</div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -40,6 +60,7 @@ export function AppShell({ session, children }: { session: Session; children: Re
             <div className="text-[10px] tracking-[0.3em] text-muted-foreground">— 99 —</div>
           </div>
         </div>
+
         <nav className="mt-8 flex-1 space-y-1">
           {items.map((it) => {
             const active = location.pathname.startsWith(it.to);
@@ -61,11 +82,14 @@ export function AppShell({ session, children }: { session: Session; children: Re
             );
           })}
         </nav>
+
         <div className="border-t border-sidebar-border pt-4 space-y-3">
           <div className="px-2">
             <div className="text-xs text-muted-foreground">Login sebagai</div>
-            <div className="text-sm font-semibold truncate">{session.nama}</div>
-            <div className="text-[10px] uppercase tracking-wider text-brand font-semibold">{session.role.replace("_", " ")}</div>
+            <div className="text-sm font-semibold truncate">{session?.nama ?? ""}</div>
+            <div className="text-[10px] uppercase tracking-wider text-brand font-semibold">
+              {session?.role?.replace("_", " ") ?? ""}
+            </div>
           </div>
           <div className="flex items-center justify-between px-2">
             <ThemeToggle />
@@ -100,7 +124,10 @@ export function AppShell({ session, children }: { session: Session; children: Re
 
       {/* Mobile bottom nav */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-border bg-card/95 backdrop-blur">
-        <div className="grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0,1fr))` }}>
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0,1fr))` }}
+        >
           {items.map((it) => {
             const active = location.pathname.startsWith(it.to);
             const Icon = it.icon;

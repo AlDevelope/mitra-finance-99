@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/customer")({
   beforeLoad: () => {
+    if (typeof window === "undefined") return;
     const s = getSession();
     if (!s) throw redirect({ to: "/login" });
     if (s.role !== "customer") throw redirect({ to: "/dashboard" });
